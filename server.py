@@ -384,13 +384,14 @@ def union_parcel_polygons(polygons):
     return [[[list(pt) for pt in part.exterior.coords]]+[[list(pt) for pt in ring.coords] for ring in part.interiors] for part in parts]
 
 LAYOUT_CACHE={}
-def satellite_layout(pnu,usable=100,density=7,row_gap=1.32):
+def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,module_width=1134,module_wp=650):
     pnus=sorted(set(pnu.split(',') if isinstance(pnu,str) else pnu))
     if not 1<=len(pnus)<=200:raise ValueError('통합 배치는 1~200필지까지 가능합니다.')
     for item in pnus:pnu_valid(item)
     pnu=pnus[0]
     if not (0<=usable<=100 and .1<=density<=100 and 0<=row_gap<=10):raise ValueError('배치 가정 범위를 확인하세요.')
-    cache_key=(tuple(pnus),usable,density,row_gap,'union-v1')
+    if not all(math.isfinite(v) for v in (module_length,module_width,module_wp)) or not (100<=module_length<=6000 and 100<=module_width<=6000 and 0<module_wp<=3000):raise ValueError('모듈 길이·너비는 100~6000mm, 출력은 0 초과~3000Wp로 입력하세요.')
+    cache_key=(tuple(pnus),usable,density,row_gap,module_length,module_width,module_wp,'union-v2')
     if cache_key in LAYOUT_CACHE:return LAYOUT_CACHE[cache_key]
     version=map_version(pnu)
     polygons=[]
@@ -406,8 +407,8 @@ def satellite_layout(pnu,usable=100,density=7,row_gap=1.32):
     xmin=min(p[0] for p in coords);xmax=max(p[0] for p in coords);ymin=min(p[1] for p in coords);ymax=max(p[1] for p in coords)
     def ring_area(r):return abs(sum(a[0]*b[1]-b[0]*a[1] for a,b in zip(r,r[1:]+r[:1]))/2)
     area=sum(ring_area(rings[0])-sum(ring_area(r) for r in rings[1:]) for rings in polygons)
-    max_count=int(area*usable/100/(2.382*1.134))
-    w=1.134;h=2.382;edge=2;pitchx=w+.02;pitchy=h+row_gap
+    max_count=int(area*usable/100/((module_length/1000)*(module_width/1000)))
+    w=module_width/1000;h=module_length/1000;edge=2;pitchx=w+.02;pitchy=h+row_gap
     if ((xmax-xmin)/pitchx)*((ymax-ymin)/pitchy)>120000:raise ValueError('배치 범위가 너무 커 자동배치 한도를 초과했습니다.')
     boundary=[(a,b) for rings in polygons for ring in rings for a,b in zip(ring,ring[1:]+ring[:1])]
     def contained(rect):
@@ -441,7 +442,7 @@ def satellite_layout(pnu,usable=100,density=7,row_gap=1.32):
     if urllib.parse.urlparse(export['href']).hostname!='services.arcgisonline.com':raise ValueError('위성영상 출처 주소를 확인하지 못했습니다.')
     ex=export['extent'];extent=[ex[k] for k in ('xmin','ymin','xmax','ymax')]
     def pixel(pt):return [round((pt[0]-extent[0])/(extent[2]-extent[0])*1200,3),round((extent[3]-pt[1])/(extent[3]-extent[1])*900,3)]
-    result={'status':'ok','pnu':pnu,'pnus':pnus,'parcelCount':len(pnus),'combined':len(pnus)>1,'count':n,'capacityKw':round(n*.65,3),'slotCount':len(slots),'moduleWp':650,'moduleLengthMm':2382,'moduleWidthMm':1134,'boundarySetbackMm':2000,'rowGapM':row_gap,'moduleGapMm':20,'usablePct':usable,'density':density,'area':round(area,1),'mapVersion':version,'imageUrl':export['href'],'extent':extent,'outlines':[[[pixel(pt) for pt in ring] for ring in rings] for rings in outlines],'panels':[[pixel(pt) for pt in rect] for rect in panels],'queriedAt':now(),'imagerySource':service,'attribution':'Tiles © Esri — Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community','limitation':'부지 경계 안쪽 2m·행 간격 가정·수평 평면 배치. 주거지 규제·진입로·지장물·지형음영·경사 투영·구조설계는 미반영. 영상 촬영일 미확인, 최신 현황·정밀측량 확인 필요. 선택 필지의 합집합 경계로 통합 배치하며 공유 경계에는 이격을 두지 않습니다. 떨어진 필지·제외된 땅·내부 구멍은 연결하거나 채우지 않으며 실제 외곽 및 내부 빈 땅 경계에서 2m를 유지합니다. 경계 연산 정밀도 1mm.'}
+    result={'status':'ok','pnu':pnu,'pnus':pnus,'parcelCount':len(pnus),'combined':len(pnus)>1,'count':n,'capacityKw':round(n*module_wp/1000,3),'slotCount':len(slots),'moduleWp':module_wp,'moduleLengthMm':module_length,'moduleWidthMm':module_width,'boundarySetbackMm':2000,'rowGapM':row_gap,'moduleGapMm':20,'usablePct':usable,'density':density,'area':round(area,1),'mapVersion':version,'imageUrl':export['href'],'extent':extent,'outlines':[[[pixel(pt) for pt in ring] for ring in rings] for rings in outlines],'panels':[[pixel(pt) for pt in rect] for rect in panels],'queriedAt':now(),'imagerySource':service,'attribution':'Tiles © Esri — Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community','limitation':'부지 경계 안쪽 2m·행 간격 가정·수평 평면 배치. 주거지 규제·진입로·지장물·지형음영·경사 투영·구조설계는 미반영. 영상 촬영일 미확인, 최신 현황·정밀측량 확인 필요. 선택 필지의 합집합 경계로 통합 배치하며 공유 경계에는 이격을 두지 않습니다. 떨어진 필지·제외된 땅·내부 구멍은 연결하거나 채우지 않으며 실제 외곽 및 내부 빈 땅 경계에서 2m를 유지합니다. 경계 연산 정밀도 1mm.'}
     if len(LAYOUT_CACHE)>100:LAYOUT_CACHE.clear()
     LAYOUT_CACHE[cache_key]=result
     return result
@@ -564,7 +565,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if url.path=='/api/search':return self.reply(search_land(q.get('q',[''])[0]))
             if url.path=='/api/land':return self.reply(land_detail(q.get('pnu',[''])[0]))
-            if url.path=='/api/layout':return self.reply(satellite_layout(q.get('pnus',q.get('pnu',['']))[0],float(q.get('usable',['100'])[0]),float(q.get('density',['7'])[0]),float(q.get('rowGap',['1.32'])[0])))
+            if url.path=='/api/layout':return self.reply(satellite_layout(q.get('pnus',q.get('pnu',['']))[0],float(q.get('usable',['100'])[0]),float(q.get('density',['7'])[0]),float(q.get('rowGap',['1.32'])[0]),float(q.get('moduleLength',['2382'])[0]),float(q.get('moduleWidth',['1134'])[0]),float(q.get('moduleWp',['650'])[0])))
             if url.path=='/api/housing':return self.reply(housing_detail(q.get('pnu',[''])[0]))
             if url.path=='/api/terrain':return self.reply(terrain_detail(q.get('pnu',[''])[0]))
             if url.path=='/api/grid':
