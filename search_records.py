@@ -8,6 +8,7 @@ import hmac
 import time
 from threading import Lock
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from xml.sax.saxutils import escape
 from datetime import datetime, timezone, timedelta
@@ -15,22 +16,59 @@ from datetime import datetime, timezone, timedelta
 _lock = Lock()
 _failures = []
 
+class StorageError(Exception):
+    pass
+
+def storage_error(error):
+    if isinstance(error, StorageError):
+        return str(error)
+    return '저장소 응답 처리 실패입니다. 최신 app.py와 search_records.py를 함께 업로드했는지 확인하세요.'
+
 def configured():
     return bool(os.getenv('SUPABASE_URL') and os.getenv('SUPABASE_SECRET_KEY'))
 
 def request_db(method, query, data=None):
     base = os.getenv('SUPABASE_URL', '').rstrip('/')
     key = os.getenv('SUPABASE_SECRET_KEY', '')
+    if not base:
+        raise StorageError('Render Environment에 SUPABASE_URL이 없습니다.')
+    if not key:
+        raise StorageError('Render Environment에 SUPABASE_SECRET_KEY가 없습니다.')
+    if base != base.strip() or key != key.strip():
+        raise StorageError('연결 값 앞뒤에 공백 또는 줄바꿈이 있습니다. Render의 두 값을 다시 입력하세요.')
     parsed = urlsplit(base)
     if not configured() or parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.supabase.co') or parsed.path or parsed.query or parsed.fragment or parsed.username:
-        raise ValueError('저장소 연결 설정을 확인하세요.')
+        raise StorageError('SUPABASE_URL 형식이 잘못됐습니다. https://프로젝트ID.supabase.co 형태의 프로젝트 주소만 입력하세요. /dashboard 또는 /rest/v1은 붙이지 않습니다.')
+    if key.startswith('sb_publishable_'):
+        raise StorageError('Publishable 키가 입력됐습니다. 같은 프로젝트의 Secret key를 SUPABASE_SECRET_KEY에 입력하세요.')
     headers = {'apikey': key, 'Content-Type': 'application/json', 'Prefer': 'return=minimal'}
     if not key.startswith('sb_secret_'):
         headers['Authorization'] = 'Bearer ' + key
     body = json.dumps(data, ensure_ascii=False).encode() if data is not None else None
     req = Request(base + '/rest/v1/parcel_search_events?' + urlencode(query), data=body, headers=headers, method=method)
-    with urlopen(req, timeout=12) as response:
-        raw = response.read()
+    try:
+        with urlopen(req, timeout=12) as response:
+            raw = response.read()
+    except HTTPError as error:
+        try:
+            code = json.loads(error.read(8192)).get('code','')
+        except Exception:
+            code = ''
+        if code in {'PGRST205','42P01'}:
+            message = 'parcel_search_events 표를 찾지 못했습니다. Render에 연결한 것과 같은 Supabase 프로젝트에서 검색기록표_생성.sql을 실행하세요.'
+        elif code in {'PGRST204','42703'}:
+            message = '표의 열이 일치하지 않습니다. parcel_search_events에 id, address, searched_at 열이 모두 있어야 합니다.'
+        elif error.code == 401:
+            message = 'Supabase 인증 실패(401)입니다. URL과 Secret key가 같은 프로젝트의 값인지, 키 전체가 복사됐는지 확인하세요. anon/Publishable 키는 사용하지 않습니다.'
+        elif error.code == 403 or code == '42501':
+            message = 'Supabase 접근 권한이 없습니다. Secret key 또는 service_role 키를 사용하고 검색기록표_생성.sql의 권한 설정까지 실행하세요.'
+        elif error.code == 404:
+            message = 'Supabase 주소를 찾지 못했습니다(404). 프로젝트 URL과 프로젝트의 실행 상태를 확인하세요.'
+        else:
+            message = f'Supabase가 HTTP {error.code}로 응답했습니다. 프로젝트가 실행 중인지 확인하세요.'
+        raise StorageError(message) from None
+    except (URLError, TimeoutError):
+        raise StorageError('Supabase 서버에 연결하지 못했습니다. 프로젝트 URL 철자와 Supabase 프로젝트의 일시중지 여부를 확인하세요.') from None
     return json.loads(raw) if raw else None
 
 def record(address):

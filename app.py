@@ -48,7 +48,7 @@ def application(environ,start_response):
         try:
             body=search_records.workbook(search_records.addresses())
             return send(body,mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',extra=[('Content-Disposition','attachment; filename="SOLAR_JIN_parcels.xlsx"')])
-        except Exception:return send('저장소 연결 실패: Render의 SUPABASE_URL·SUPABASE_SECRET_KEY와 Supabase의 parcel_search_events 표를 확인하세요.',502,'text/plain; charset=utf-8')
+        except Exception as error:return send('저장소 연결 실패: '+search_records.storage_error(error),502,'text/plain; charset=utf-8')
     if method not in ('GET','HEAD'):return send({'error':'GET only'},405,extra=[('Allow','GET, HEAD')])
     if path in ('/admin','/admin/'):
         return send((STATIC/'admin.html').read_bytes(),mime='text/html; charset=utf-8')
