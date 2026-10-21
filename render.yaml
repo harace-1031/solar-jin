@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: solar-jin
+    runtime: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:application --config gunicorn.conf.py
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.16
+      - key: ALLOWED_HOSTS
+        value: solar.jinenergy.co.kr
