@@ -359,16 +359,48 @@ def housing_detail(pnu):
     HOUSING_CACHE[pnu]=result
     return result
 
+def union_parcel_polygons(polygons):
+    try:
+        from shapely.geometry import Polygon
+        from shapely import union_all
+    except ImportError:
+        import sys
+        vendor=ROOT/'runtime'/'site-packages'
+        if vendor.is_dir():sys.path.insert(0,str(vendor))
+        try:
+            from shapely.geometry import Polygon
+            from shapely import union_all
+        except ImportError:raise ValueError('통합 경계 연산 라이브러리가 없습니다. 업데이트 파일과 requirements.txt를 함께 적용하세요.')
+    shapes=[]
+    for rings in polygons:
+        if not rings:continue
+        shape=Polygon(rings[0],rings[1:])
+        if shape.is_empty or not shape.is_valid:raise ValueError('필지 경계가 유효하지 않아 통합 배치를 중단했습니다. 원문 경계를 확인하세요.')
+        shapes.append(shape)
+    if not shapes:raise ValueError('통합할 필지 경계가 없습니다.')
+    merged=union_all(shapes,grid_size=.001)
+    if merged.is_empty or merged.geom_type not in ('Polygon','MultiPolygon'):raise ValueError('통합 부지 경계를 만들지 못했습니다.')
+    parts=[merged] if merged.geom_type=='Polygon' else list(merged.geoms)
+    return [[[list(pt) for pt in part.exterior.coords]]+[[list(pt) for pt in ring.coords] for ring in part.interiors] for part in parts]
+
 LAYOUT_CACHE={}
 def satellite_layout(pnu,usable=100,density=7,row_gap=1.32):
-    pnu_valid(pnu)
+    pnus=sorted(set(pnu.split(',') if isinstance(pnu,str) else pnu))
+    if not 1<=len(pnus)<=200:raise ValueError('통합 배치는 1~200필지까지 가능합니다.')
+    for item in pnus:pnu_valid(item)
+    pnu=pnus[0]
     if not (0<=usable<=100 and .1<=density<=100 and 0<=row_gap<=10):raise ValueError('배치 가정 범위를 확인하세요.')
-    cache_key=(pnu,usable,density,row_gap)
+    cache_key=(tuple(pnus),usable,density,row_gap,'union-v1')
     if cache_key in LAYOUT_CACHE:return LAYOUT_CACHE[cache_key]
-    version=map_version(pnu);parcel_center(pnu,version)
+    version=map_version(pnu)
     polygons=[]
-    for g in GEO_SHAPES.get((pnu,version),[]):
-        polygons.extend([g['coordinates']] if g.get('type')=='Polygon' else g.get('coordinates',[]) if g.get('type')=='MultiPolygon' else [])
+    for item in pnus:
+        parcel_center(item,version)
+        geometries=GEO_SHAPES.get((item,version),[])
+        if not geometries:raise ValueError('일부 필지의 경계가 없어 전체 통합 배치를 중단했습니다.')
+        for g in geometries:
+            polygons.extend([g['coordinates']] if g.get('type')=='Polygon' else g.get('coordinates',[]) if g.get('type')=='MultiPolygon' else [])
+    if len(pnus)>1:polygons=union_parcel_polygons(polygons)
     coords=[pt for rings in polygons for ring in rings for pt in ring]
     if not coords:raise ValueError('배치할 필지 경계를 찾지 못했습니다.')
     xmin=min(p[0] for p in coords);xmax=max(p[0] for p in coords);ymin=min(p[1] for p in coords);ymax=max(p[1] for p in coords)
@@ -409,7 +441,7 @@ def satellite_layout(pnu,usable=100,density=7,row_gap=1.32):
     if urllib.parse.urlparse(export['href']).hostname!='services.arcgisonline.com':raise ValueError('위성영상 출처 주소를 확인하지 못했습니다.')
     ex=export['extent'];extent=[ex[k] for k in ('xmin','ymin','xmax','ymax')]
     def pixel(pt):return [round((pt[0]-extent[0])/(extent[2]-extent[0])*1200,3),round((extent[3]-pt[1])/(extent[3]-extent[1])*900,3)]
-    result={'status':'ok','pnu':pnu,'count':n,'capacityKw':round(n*.65,3),'slotCount':len(slots),'moduleWp':650,'moduleLengthMm':2382,'moduleWidthMm':1134,'boundarySetbackMm':2000,'rowGapM':row_gap,'moduleGapMm':20,'usablePct':usable,'density':density,'area':round(area,1),'mapVersion':version,'imageUrl':export['href'],'extent':extent,'outlines':[[[pixel(pt) for pt in ring] for ring in rings] for rings in outlines],'panels':[[pixel(pt) for pt in rect] for rect in panels],'queriedAt':now(),'imagerySource':service,'attribution':'Tiles © Esri — Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community','limitation':'부지 경계 안쪽 2m·행 간격 가정·수평 평면 배치. 주거지 규제·진입로·지장물·지형음영·경사 투영·구조설계는 미반영. 영상 촬영일 미확인, 최신 현황·정밀측량 확인 필요. 여러 필지는 개별 배치이며 중복·겹침·필지 사이 통로는 별도 검토.'}
+    result={'status':'ok','pnu':pnu,'pnus':pnus,'parcelCount':len(pnus),'combined':len(pnus)>1,'count':n,'capacityKw':round(n*.65,3),'slotCount':len(slots),'moduleWp':650,'moduleLengthMm':2382,'moduleWidthMm':1134,'boundarySetbackMm':2000,'rowGapM':row_gap,'moduleGapMm':20,'usablePct':usable,'density':density,'area':round(area,1),'mapVersion':version,'imageUrl':export['href'],'extent':extent,'outlines':[[[pixel(pt) for pt in ring] for ring in rings] for rings in outlines],'panels':[[pixel(pt) for pt in rect] for rect in panels],'queriedAt':now(),'imagerySource':service,'attribution':'Tiles © Esri — Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community','limitation':'부지 경계 안쪽 2m·행 간격 가정·수평 평면 배치. 주거지 규제·진입로·지장물·지형음영·경사 투영·구조설계는 미반영. 영상 촬영일 미확인, 최신 현황·정밀측량 확인 필요. 선택 필지의 합집합 경계로 통합 배치하며 공유 경계에는 이격을 두지 않습니다. 떨어진 필지·제외된 땅·내부 구멍은 연결하거나 채우지 않으며 실제 외곽 및 내부 빈 땅 경계에서 2m를 유지합니다. 경계 연산 정밀도 1mm.'}
     if len(LAYOUT_CACHE)>100:LAYOUT_CACHE.clear()
     LAYOUT_CACHE[cache_key]=result
     return result
@@ -532,7 +564,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if url.path=='/api/search':return self.reply(search_land(q.get('q',[''])[0]))
             if url.path=='/api/land':return self.reply(land_detail(q.get('pnu',[''])[0]))
-            if url.path=='/api/layout':return self.reply(satellite_layout(q.get('pnu',[''])[0],float(q.get('usable',['100'])[0]),float(q.get('density',['7'])[0]),float(q.get('rowGap',['1.32'])[0])))
+            if url.path=='/api/layout':return self.reply(satellite_layout(q.get('pnus',q.get('pnu',['']))[0],float(q.get('usable',['100'])[0]),float(q.get('density',['7'])[0]),float(q.get('rowGap',['1.32'])[0])))
             if url.path=='/api/housing':return self.reply(housing_detail(q.get('pnu',[''])[0]))
             if url.path=='/api/terrain':return self.reply(terrain_detail(q.get('pnu',[''])[0]))
             if url.path=='/api/grid':

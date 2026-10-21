@@ -29,7 +29,7 @@ def application(environ,start_response):
     if host not in allowed:return send({'error':'Unknown host'},403)
     if path=='/api/health':return send({'ok':True,'app':'SOLAR_JIN','version':'render-1'})
     if path.startswith('/api/'):
-        if len(environ.get('QUERY_STRING',''))>2000:return send({'error':'Query too long'},400)
+        if len(environ.get('QUERY_STRING',''))>6000:return send({'error':'Query too long'},400)
         q=parse_qs(environ.get('QUERY_STRING',''));get=lambda key,default='':q.get(key,[default])[0]
         known={'/api/search','/api/land','/api/grid','/api/map','/api/terrain','/api/housing','/api/layout'}
         if path not in known:return send({'error':'Unknown endpoint'},404)
@@ -40,7 +40,7 @@ def application(environ,start_response):
             elif path=='/api/land':result=server.land_detail(pnu)
             elif path=='/api/terrain':result=server.terrain_detail(pnu)
             elif path=='/api/housing':result=server.housing_detail(pnu)
-            elif path=='/api/layout':result=server.satellite_layout(pnu,float(get('usable','100')),float(get('density','7')),float(get('rowGap','1.32')))
+            elif path=='/api/layout':result=server.satellite_layout(get('pnus',pnu),float(get('usable','100')),float(get('density','7')),float(get('rowGap','1.32')))
             elif path=='/api/grid':
                 land=server.land_detail(pnu);result=server.grid_detail(land['address'],land['pnu'])
             else:
