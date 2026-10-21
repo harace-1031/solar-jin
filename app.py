@@ -19,7 +19,7 @@ def application(environ,start_response):
         if isinstance(body,(dict,list)):body=json.dumps(body,ensure_ascii=False).encode()
         elif isinstance(body,str):body=body.encode()
         names={200:'OK',400:'Bad Request',403:'Forbidden',404:'Not Found',405:'Method Not Allowed',422:'Unprocessable Content',429:'Too Many Requests',502:'Bad Gateway',503:'Service Unavailable'}
-        headers=[('Content-Type',mime),('Content-Length',str(len(body))),('Cache-Control','no-store' if path.startswith(('/api/','/admin')) else 'no-cache'),('X-Content-Type-Options','nosniff'),('Referrer-Policy','no-referrer'),('X-Frame-Options','DENY'),*extra]
+        headers=[('Content-Type',mime),('Content-Length',str(len(body))),('Cache-Control','no-store' if path.startswith(('/api/','/admin')) else 'no-cache'),('X-Content-Type-Options','nosniff'),('Referrer-Policy','same-origin'),('X-Frame-Options','DENY'),*extra]
         start_response(str(status)+' '+names[status],headers)
         return [b'' if method=='HEAD' else body]
     host=environ.get('HTTP_HOST','').split(':')[0].lower()
@@ -30,7 +30,10 @@ def application(environ,start_response):
     if path=='/admin/export':
         if method!='POST':return send('관리자 화면에서 비밀번호를 입력하세요.',405,'text/plain; charset=utf-8',extra=[('Allow','POST')])
         origin=environ.get('HTTP_ORIGIN')
-        if origin and origin not in ('https://'+environ.get('HTTP_HOST',''),'http://'+environ.get('HTTP_HOST','') if host in {'localhost','127.0.0.1'} else ''):
+        trusted_origins={'https://'+name for name in allowed if name not in {'localhost','127.0.0.1'}}
+        if host in {'localhost','127.0.0.1'}:
+            trusted_origins.update({'http://'+environ.get('HTTP_HOST',''),'https://'+environ.get('HTTP_HOST','')})
+        if origin and origin not in trusted_origins:
             return send('허용되지 않은 요청입니다.',403,'text/plain; charset=utf-8')
         try:
             size=int(environ.get('CONTENT_LENGTH','0'))
