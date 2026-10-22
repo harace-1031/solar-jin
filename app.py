@@ -10,7 +10,11 @@ import search_records
 
 ROOT=Path(__file__).resolve().parent
 STATIC=ROOT/'dist'
-SLOTS=BoundedSemaphore(4)
+SEARCH_SLOTS=BoundedSemaphore(2)
+LAND_SLOTS=BoundedSemaphore(2)
+GRID_SLOTS=BoundedSemaphore(1)
+BACKGROUND_SLOTS=BoundedSemaphore(2)
+MAP_SLOTS=BoundedSemaphore(1)
 
 def application(environ,start_response):
     method=environ.get('REQUEST_METHOD','GET')
@@ -58,7 +62,8 @@ def application(environ,start_response):
         q=parse_qs(environ.get('QUERY_STRING',''));get=lambda key,default='':q.get(key,[default])[0]
         known={'/api/search','/api/land','/api/grid','/api/map','/api/terrain','/api/housing','/api/layout'}
         if path not in known:return send({'error':'Unknown endpoint'},404)
-        if not SLOTS.acquire(blocking=False):return send({'error':'조회 요청이 많습니다. 잠시 후 다시 시도하세요.'},503,extra=[('Retry-After','5')])
+        slots=SEARCH_SLOTS if path=='/api/search' else LAND_SLOTS if path=='/api/land' else GRID_SLOTS if path=='/api/grid' else MAP_SLOTS if path=='/api/map' else BACKGROUND_SLOTS
+        if not slots.acquire(blocking=False):return send({'error':'해당 자료의 이전 조회가 진행 중입니다. 잠시 후 다시 시도하세요.'},503,extra=[('Retry-After','2')])
         try:
             pnu=get('pnu')
             if path=='/api/search':result=server.search_land(get('q'))
@@ -77,7 +82,7 @@ def application(environ,start_response):
             return send(result)
         except ValueError as error:return send({'error':str(error)},422)
         except Exception:return send({'error':'공식 조회 서비스 연결에 실패했습니다. 잠시 후 재조회하거나 원문을 확인하세요.'},502)
-        finally:SLOTS.release()
+        finally:slots.release()
     if '\x00' in path:return send('Not found',404,'text/plain; charset=utf-8')
     target=(STATIC/('index.html' if path=='/' else path.lstrip('/'))).resolve()
     if not target.is_relative_to(STATIC.resolve()) or not target.is_file() or any(x.startswith('.') for x in target.relative_to(STATIC).parts):return send('Not found',404,'text/plain; charset=utf-8')

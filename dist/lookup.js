@@ -13,7 +13,7 @@ function gridSummary(g){
 async function lookupApi(path){
   const base=location.protocol==='file:'?'http://127.0.0.1:8765':'';
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),(path.startsWith('/api/grid')||path.startsWith('/api/layout'))?240000:65000);
-  try{const res=await fetch(base+path,{signal:controller.signal,cache:'no-store'}),data=await res.json();if(!res.ok)throw Error(data.error||'조회 실패');return data}
+  try{for(let attempt=0;attempt<3;attempt++){const res=await fetch(base+path,{signal:controller.signal,cache:'no-store'}),data=await res.json();if(res.status===503&&attempt<2){await new Promise(resolve=>setTimeout(resolve,2000*(attempt+1)));continue}if(!res.ok)throw Error(data.error||'조회 실패');return data}}
   catch(e){if(e instanceof TypeError)throw Error('자동조회 프로그램이 실행되지 않았습니다. 함께 제공된 SOLAR_JIN 실행 파일을 열어주세요.');if(e.name==='AbortError')throw Error('조회 응답이 지연됩니다. 잠시 후 다시 검색하세요.');throw e}
   finally{clearTimeout(timer)}
 }
@@ -45,16 +45,18 @@ async function selectLookup(p,item,revision){
     try{localStorage.setItem('solar-site-v1',JSON.stringify(state,(k,v)=>k==='layout'?undefined:v))}catch{}
   }else{lookupStatus(p,land.reason.message)}
 }
+const lookupSearchJobs=new WeakMap();
 async function searchParcel(p){
   clearTimeout(lookupTimers.get(p));
   const query=(p.query??p.address).trim();if(!query){lookupStatus(p,'읍·면·동(리)과 지번을 입력하세요.');return}
-  const revision=(lookupRevisions.get(p)||0)+1;lookupRevisions.set(p,revision);
+  const previous=lookupSearchJobs.get(p);if(previous?.query===query&&previous.revision===lookupRevisions.get(p))return;
+  const revision=(lookupRevisions.get(p)||0)+1;lookupRevisions.set(p,revision);lookupSearchJobs.set(p,{query,revision});
   lookupStatus(p,'토지이음에서 지번을 검색하고 있습니다…');
   try{const data=await lookupApi('/api/search?q='+encodeURIComponent(query));if(!state.parcels.includes(p)||lookupRevisions.get(p)!==revision)return;
     lookupResults.set(p,data.results);if(data.results.length===1){await selectLookup(p,data.results[0],revision);return}
     const i=state.parcels.indexOf(p);$('lookup-results-'+i).innerHTML=data.results.map((r,j)=>`<button data-candidate="${j}" data-owner="${i}">${esc(r.address)}　→</button>`).join('');
     lookupStatus(p,data.results.length?`${data.results.length}개 주소가 있습니다. 정확한 필지를 선택하세요.`:'일치하는 지번이 없습니다. 읍·면·동(리)과 지번을 확인하세요.');
-  }catch(e){if(lookupRevisions.get(p)===revision)lookupStatus(p,e.message)}
+  }catch(e){if(lookupRevisions.get(p)===revision)lookupStatus(p,e.message)}finally{if(lookupSearchJobs.get(p)?.revision===revision)lookupSearchJobs.delete(p)}
 }
 function clearAppliedGrid(){if(!state.gridAuto)return;state.gridAvailable='';state.gridSource='';state.gridDate='';state.gridAuto=null;for(const k of ['gridAvailable','gridSource','gridDate']){const el=document.querySelector(`[data-key="${k}"]:not([data-parcel])`);if(el)el.value=''}}
 function applyGrid(p,index){const g=p.grid,r=g?.rows?.[index];if(!r)return;const vals=r.levels.map(l=>l.available);if(vals.some(v=>v===null||!Number.isFinite(+v))){alert('여유용량이 일부 제공되지 않아 적용할 수 없습니다.');return}state.gridAvailable=Math.max(0,Math.min(...vals));state.gridSource=`한전ON ${p.address} · ${r.substation} / #${r.transformer} / ${r.line} · 접수기준 3설비 최소값`;state.gridDate=g.queriedAt.slice(0,10);state.gridAuto={pnu:p.pnu,line:r.lineCode,substation:r.substationCode};for(const k of ['gridAvailable','gridSource','gridDate']){const el=document.querySelector(`[data-key="${k}"]:not([data-parcel])`);if(el)el.value=state[k]}calculate()}
