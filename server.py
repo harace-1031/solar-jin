@@ -401,14 +401,43 @@ def satellite_tiles(bbox, service):
     sample=fetch(tiles[len(tiles)//2]['url'])
     if not sample.startswith((b'\xff\xd8',b'\x89PNG')):raise ValueError('위성 타일을 불러오지 못했습니다. 잠시 후 다시 시도하세요.')
     return tiles
-def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,module_width=1134,module_wp=650):
+def shading_spacing(module_length, tilt, tiers, terrains):
+    if tilt not in (10,15) or tiers not in (1,2):raise ValueError('모듈각도는 10° 또는 15°, 단수는 1 또는 2로 선택하세요.')
+    alpha=math.radians(25);beta=math.radians(tilt)
+    length=module_length/1000*tiers+.01*(tiers-1)
+    depth=length*math.cos(beta);height=length*math.sin(beta)
+    gradients=[]
+    for t in terrains:
+        slope=t.get('slope');aspect=t.get('aspect')
+        if t.get('status')!='ok' or not isinstance(slope,(float,int)) or not math.isfinite(slope) or not 0<=slope<90:
+            raise ValueError('경사 자료가 없어 음영 행 간격을 계산할 수 없습니다. 입지·계통의 경사 조회를 다시 확인하세요.')
+        if aspect is None:
+            # Direction is undefined below 1 degree: use worst possible northward descent.
+            gradient=-math.tan(math.radians(slope))
+        else:
+            if not isinstance(aspect,(float,int)) or not math.isfinite(aspect):raise ValueError('사면 향을 확인할 수 없습니다.')
+            gradient=-math.tan(math.radians(slope))*math.cos(math.radians(aspect))
+        gradients.append(gradient)
+    if not gradients:raise ValueError('경사 자료가 없습니다.')
+    gradient=min(gradients)
+    denominator=math.tan(alpha)+gradient
+    if denominator<=1e-8:raise ValueError('북쪽 하향 경사가 태양 고도 25° 이상이어서 이 기준으로 무음영 행 간격을 정할 수 없습니다. 현장 설계가 필요합니다.')
+    pitch=max(depth,(height+depth*math.tan(alpha))/denominator)
+    return {'tiltDeg':tilt,'tiers':tiers,'solarElevationDeg':25,'tableDepthM':depth,'tableRiseM':height,'rowPitchM':pitch,'rowGapM':pitch-depth,'northSlopeDeg':math.degrees(math.atan(gradient)),'internalGapMm':10 if tiers==2 else 0,'terrainSamples':terrains}
+
+def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,module_width=1134,module_wp=650,tilt=10,tiers=1):
     pnus=sorted(set(pnu.split(',') if isinstance(pnu,str) else pnu))
     if not 1<=len(pnus)<=200:raise ValueError('통합 배치는 1~200필지까지 가능합니다.')
     for item in pnus:pnu_valid(item)
     pnu=pnus[0]
     if not (0<=usable<=100 and .1<=density<=100 and 0<=row_gap<=10):raise ValueError('배치 가정 범위를 확인하세요.')
     if not all(math.isfinite(v) for v in (module_length,module_width,module_wp)) or not (100<=module_length<=6000 and 100<=module_width<=6000 and 0<module_wp<=3000):raise ValueError('모듈 길이·너비는 100~6000mm, 출력은 0 초과~3000Wp로 입력하세요.')
-    cache_key=(tuple(pnus),usable,density,row_gap,module_length,module_width,module_wp,'union-v2')
+    if tilt not in (10,15) or tiers not in (1,2):raise ValueError('모듈각도·단수 선택을 확인하세요.')
+    try:
+        terrains=[terrain_detail(item) for item in pnus]
+    except Exception:raise ValueError('부지 경사·사면 향 조회에 실패해 음영 배치를 중단했습니다. 잠시 후 다시 그리기를 눌러주세요.') from None
+    spacing=shading_spacing(module_length,tilt,tiers,terrains)
+    cache_key=(tuple(pnus),usable,density,module_length,module_width,module_wp,tilt,tiers,tuple((t['slope'],t.get('aspect')) for t in terrains),'shade-v1')
     if cache_key in LAYOUT_CACHE:return LAYOUT_CACHE[cache_key]
     version=map_version(pnu)
     polygons=[]
@@ -424,8 +453,10 @@ def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,mo
     xmin=min(p[0] for p in coords);xmax=max(p[0] for p in coords);ymin=min(p[1] for p in coords);ymax=max(p[1] for p in coords)
     def ring_area(r):return abs(sum(a[0]*b[1]-b[0]*a[1] for a,b in zip(r,r[1:]+r[:1]))/2)
     area=sum(ring_area(rings[0])-sum(ring_area(r) for r in rings[1:]) for rings in polygons)
-    max_count=int(area*usable/100/((module_length/1000)*(module_width/1000)))
-    w=module_width/1000;h=module_length/1000;edge=2;pitchx=w+.02;pitchy=h+row_gap
+    beta=math.radians(tilt)
+    module_depth=module_length/1000*math.cos(beta)
+    max_tables=int(area*usable/100/((module_width/1000)*spacing['tableDepthM']))
+    w=module_width/1000;h=spacing['tableDepthM'];edge=2;pitchx=w+.02;pitchy=spacing['rowPitchM']
     if ((xmax-xmin)/pitchx)*((ymax-ymin)/pitchy)>120000:raise ValueError('배치 범위가 너무 커 자동배치 한도를 초과했습니다.')
     boundary=[(a,b) for rings in polygons for ring in rings for a,b in zip(ring,ring[1:]+ring[:1])]
     def contained(rect):
@@ -443,8 +474,15 @@ def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,mo
             if contained(rect):slots.append(rect)
             x+=pitchx
         y+=pitchy
-    n=min(len(slots),max_count,15000)
-    modules=slots[:n] if n else []
+    table_count=min(len(slots),max_tables,15000//tiers)
+    modules=[]
+    for rect in slots[:table_count]:
+        x,y=rect[0]
+        for tier in range(tiers):
+            py=y+tier*(module_depth+.01*math.cos(beta))
+            modules.append([[x,py],[x+w,py],[x+w,py+module_depth],[x,py+module_depth]])
+    n=len(modules)
+    row_gap=spacing['rowGapM']
     def merc(pt):
         lat,lon=tm_to_wgs84(*pt[:2]);return [6378137*math.radians(lon),6378137*math.log(math.tan(math.pi/4+math.radians(lat)/2))]
     outlines=[[[merc(pt) for pt in ring] for ring in rings] for rings in polygons]
@@ -470,6 +508,9 @@ def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,mo
     result={'status':'ok','pnu':pnu,'pnus':pnus,'parcelCount':len(pnus),'combined':len(pnus)>1,'count':n,'capacityKw':round(n*module_wp/1000,3),'slotCount':len(slots),'moduleWp':module_wp,'moduleLengthMm':module_length,'moduleWidthMm':module_width,'boundarySetbackMm':2000,'rowGapM':row_gap,'moduleGapMm':20,'usablePct':usable,'density':density,'area':round(area,1),'mapVersion':version,'imageUrl':export['href'],'extent':extent,'outlines':[[[pixel(pt) for pt in ring] for ring in rings] for rings in outlines],'panels':[[pixel(pt) for pt in rect] for rect in panels],'queriedAt':now(),'imagerySource':service,'attribution':'Tiles © Esri — Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community','limitation':'부지 경계 안쪽 2m·행 간격 가정·수평 평면 배치. 주거지 규제·진입로·지장물·지형음영·경사 투영·구조설계는 미반영. 영상 촬영일 미확인, 최신 현황·정밀측량 확인 필요. 선택 필지의 합집합 경계로 통합 배치하며 공유 경계에는 이격을 두지 않습니다. 떨어진 필지·제외된 땅·내부 구멍은 연결하거나 채우지 않으며 실제 외곽 및 내부 빈 땅 경계에서 2m를 유지합니다. 경계 연산 정밀도 1mm.'}
     result['imageTiles']=tiles
     result['imageryMode']='tiles' if tiles else 'export'
+    result['spacing']=spacing
+    result['tableCount']=table_count
+    result['limitation']='정남향·수평면 기준 모듈각도·태양 고도 25°의 남북 단면 개념 배치. DEM 대표 경사·사면 향 중 가장 불리한 남북 기울기를 전체에 적용합니다. 국부 지형·동서 방향 음영·아침저녁 태양·주변 장애물·구조물 높이 차·정밀 지형은 미반영이며 연중 무음영을 보장하지 않습니다. 통합 부지 외곽과 내부 빈 땅에서 2m 이격합니다. 2단은 같은 경사면에 세로 모듈 2장을 연속 설치하고 내부 틈 1cm를 둡니다.'
     if len(LAYOUT_CACHE)>100:LAYOUT_CACHE.clear()
     LAYOUT_CACHE[cache_key]=result
     return result
@@ -592,7 +633,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if url.path=='/api/search':return self.reply(search_land(q.get('q',[''])[0]))
             if url.path=='/api/land':return self.reply(land_detail(q.get('pnu',[''])[0]))
-            if url.path=='/api/layout':return self.reply(satellite_layout(q.get('pnus',q.get('pnu',['']))[0],float(q.get('usable',['100'])[0]),float(q.get('density',['7'])[0]),float(q.get('rowGap',['1.32'])[0]),float(q.get('moduleLength',['2382'])[0]),float(q.get('moduleWidth',['1134'])[0]),float(q.get('moduleWp',['650'])[0])))
+            if url.path=='/api/layout':return self.reply(satellite_layout(q.get('pnus',q.get('pnu',['']))[0],float(q.get('usable',['100'])[0]),float(q.get('density',['7'])[0]),float(q.get('rowGap',['1.32'])[0]),float(q.get('moduleLength',['2382'])[0]),float(q.get('moduleWidth',['1134'])[0]),float(q.get('moduleWp',['650'])[0]),float(q.get('tilt',['10'])[0]),int(q.get('tiers',['1'])[0])))
             if url.path=='/api/housing':return self.reply(housing_detail(q.get('pnu',[''])[0]))
             if url.path=='/api/terrain':return self.reply(terrain_detail(q.get('pnu',[''])[0]))
             if url.path=='/api/grid':

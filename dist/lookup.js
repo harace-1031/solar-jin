@@ -12,7 +12,7 @@ function gridSummary(g){
 }
 async function lookupApi(path){
   const base=location.protocol==='file:'?'http://127.0.0.1:8765':'';
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),path.startsWith('/api/grid')?240000:65000);
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),(path.startsWith('/api/grid')||path.startsWith('/api/layout'))?240000:65000);
   try{const res=await fetch(base+path,{signal:controller.signal,cache:'no-store'}),data=await res.json();if(!res.ok)throw Error(data.error||'조회 실패');return data}
   catch(e){if(e instanceof TypeError)throw Error('자동조회 프로그램이 실행되지 않았습니다. 함께 제공된 SOLAR_JIN 실행 파일을 열어주세요.');if(e.name==='AbortError')throw Error('조회 응답이 지연됩니다. 잠시 후 다시 검색하세요.');throw e}
   finally{clearTimeout(timer)}
