@@ -384,6 +384,23 @@ def union_parcel_polygons(polygons):
     return [[[list(pt) for pt in part.exterior.coords]]+[[list(pt) for pt in ring.coords] for ring in part.interiors] for part in parts]
 
 LAYOUT_CACHE={}
+
+def satellite_tiles(bbox, service):
+    radius=20037508.342789244
+    xmin,ymin,xmax,ymax=bbox
+    zoom=max(0,min(19,int(math.floor(math.log2(2*radius*800/((xmax-xmin)*256))))))
+    span=2*radius/(2**zoom)
+    c0=int(math.floor((xmin+radius)/span));c1=int(math.floor((xmax+radius)/span))
+    r0=int(math.floor((radius-ymax)/span));r1=int(math.floor((radius-ymin)/span))
+    tiles=[]
+    for row in range(r0,r1+1):
+        for col in range(c0,c1+1):
+            tx=-radius+col*span;ty=radius-row*span
+            tiles.append({'url':f'{service}/tile/{zoom}/{row}/{col}','x':(tx-xmin)/(xmax-xmin)*1200,'y':(ymax-ty)/(ymax-ymin)*900,'width':span/(xmax-xmin)*1200,'height':span/(ymax-ymin)*900})
+    if len(tiles)>36:raise ValueError('위성 타일 범위를 초과했습니다.')
+    sample=fetch(tiles[len(tiles)//2]['url'])
+    if not sample.startswith((b'\xff\xd8',b'\x89PNG')):raise ValueError('위성 타일을 불러오지 못했습니다. 잠시 후 다시 시도하세요.')
+    return tiles
 def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,module_width=1134,module_wp=650):
     pnus=sorted(set(pnu.split(',') if isinstance(pnu,str) else pnu))
     if not 1<=len(pnus)<=200:raise ValueError('통합 배치는 1~200필지까지 가능합니다.')
@@ -437,12 +454,22 @@ def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,mo
     cx=(mx0+mx1)/2;cy=(my0+my1)/2;span=max(mx1-mx0,(my1-my0)*4/3,300)*1.2
     bbox=[cx-span/2,cy-span*3/8,cx+span/2,cy+span*3/8]
     service='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
-    export=json.loads(fetch(service+'/export?'+urllib.parse.urlencode({'bbox':','.join(str(v) for v in bbox),'bboxSR':3857,'imageSR':3857,'size':'800,600','format':'jpg','f':'json'})))
-    if not export.get('href') or not export.get('extent'):raise ValueError('위성영상 조회가 제한되었습니다. 잠시 후 다시 시도하세요.')
-    if urllib.parse.urlparse(export['href']).hostname!='services.arcgisonline.com':raise ValueError('위성영상 출처 주소를 확인하지 못했습니다.')
-    ex=export['extent'];extent=[ex[k] for k in ('xmin','ymin','xmax','ymax')]
+    tiles=[]
+    try:
+        export=json.loads(fetch(service+'/export?'+urllib.parse.urlencode({'bbox':','.join(str(v) for v in bbox),'bboxSR':3857,'imageSR':3857,'size':'800,600','format':'jpg','f':'json'})))
+    except Exception:
+        export={}
+    if export.get('href') and export.get('extent'):
+        if urllib.parse.urlparse(export['href']).hostname!='services.arcgisonline.com':raise ValueError('위성영상 출처 주소를 확인하지 못했습니다.')
+        ex=export['extent'];extent=[ex[k] for k in ('xmin','ymin','xmax','ymax')]
+    else:
+        tiles=satellite_tiles(bbox,service)
+        extent=bbox
+        export={'href':''}
     def pixel(pt):return [round((pt[0]-extent[0])/(extent[2]-extent[0])*1200,3),round((extent[3]-pt[1])/(extent[3]-extent[1])*900,3)]
     result={'status':'ok','pnu':pnu,'pnus':pnus,'parcelCount':len(pnus),'combined':len(pnus)>1,'count':n,'capacityKw':round(n*module_wp/1000,3),'slotCount':len(slots),'moduleWp':module_wp,'moduleLengthMm':module_length,'moduleWidthMm':module_width,'boundarySetbackMm':2000,'rowGapM':row_gap,'moduleGapMm':20,'usablePct':usable,'density':density,'area':round(area,1),'mapVersion':version,'imageUrl':export['href'],'extent':extent,'outlines':[[[pixel(pt) for pt in ring] for ring in rings] for rings in outlines],'panels':[[pixel(pt) for pt in rect] for rect in panels],'queriedAt':now(),'imagerySource':service,'attribution':'Tiles © Esri — Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community','limitation':'부지 경계 안쪽 2m·행 간격 가정·수평 평면 배치. 주거지 규제·진입로·지장물·지형음영·경사 투영·구조설계는 미반영. 영상 촬영일 미확인, 최신 현황·정밀측량 확인 필요. 선택 필지의 합집합 경계로 통합 배치하며 공유 경계에는 이격을 두지 않습니다. 떨어진 필지·제외된 땅·내부 구멍은 연결하거나 채우지 않으며 실제 외곽 및 내부 빈 땅 경계에서 2m를 유지합니다. 경계 연산 정밀도 1mm.'}
+    result['imageTiles']=tiles
+    result['imageryMode']='tiles' if tiles else 'export'
     if len(LAYOUT_CACHE)>100:LAYOUT_CACHE.clear()
     LAYOUT_CACHE[cache_key]=result
     return result
