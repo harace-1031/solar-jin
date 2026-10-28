@@ -14,12 +14,16 @@ import json
 import math
 import threading
 import re
+import secrets
+import sys
 import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
+if __name__=='__main__':sys.modules.setdefault('server',sys.modules[__name__])
 EUM = 'https://www.eum.go.kr'
 KEPCO = 'https://online.kepco.co.kr'
 GRID_PAGE = KEPCO + '/EWM092D00'
@@ -512,6 +516,7 @@ def satellite_layout(pnu,usable=100,density=7,row_gap=1.32,module_length=2382,mo
     result['spacing']=spacing
     result['tableCount']=table_count
     result['cadGeometry']={'crs':'EPSG:5179','units':'m','outlines':polygons,'panels':modules,'moduleWp':module_wp,'moduleLengthMm':module_length,'moduleWidthMm':module_width,'tiltDeg':tilt,'tiers':tiers,'rowGapM':row_gap,'rowPitchM':spacing['rowPitchM'],'boundarySetbackM':setback}
+    result['cadToken']=secrets.token_urlsafe(24)
     result['limitation']=f'정남향·수평면 기준 모듈각도·태양 고도 25°의 남북 단면 개념 배치. DEM 대표 경사·사면 향 중 가장 불리한 남북 기울기를 전체에 적용합니다. 국부 지형·동서 방향 음영·아침저녁 태양·주변 장애물·구조물 높이 차·정밀 지형은 미반영이며 연중 무음영을 보장하지 않습니다. 통합 부지 외곽과 내부 빈 땅에서 {setback:g}m 이격합니다. 2단은 같은 경사면에 세로 모듈 2장을 연속 설치하고 내부 틈 1cm를 둡니다.'
     if len(LAYOUT_CACHE)>100:LAYOUT_CACHE.clear()
     LAYOUT_CACHE[cache_key]=result
@@ -609,6 +614,19 @@ def grid_detail(address,pnu):
             'address':address,'queryAddress':req,'substituted':bool(substitution),'substitution':({**substitution,**nearest_meta,'matchedAddress':address.rsplit(' ',1)[0]+' '+substitution['lot']} if substitution else None),'message':'특고압(22.9kV) 기준 참고자료. 송전망 여유·최종 접속 검토는 별도입니다.'}
 
 class Handler(SimpleHTTPRequestHandler):
+    def do_POST(self):
+        if self.headers.get('Host','').split(':')[0] not in ('127.0.0.1','localhost'):return self.reply({'error':'Local access only'},403)
+        if urllib.parse.urlparse(self.path).path!='/api/cad-package':return self.reply({'error':'Unknown endpoint'},404)
+        origin=self.headers.get('Origin')
+        if origin and origin!='http://'+self.headers.get('Host',''):return self.reply({'error':'허용되지 않은 요청입니다.'},403)
+        try:
+            size=int(self.headers.get('Content-Length','0'))
+            if not 0<size<=4096:return self.reply({'error':'잘못된 다운로드 요청입니다.'},400)
+            import cad_export
+            body=cad_export.prepare(json.loads(self.rfile.read(size).decode()))
+            self.send_response(200);self.send_header('Content-Type','application/zip');self.send_header('Content-Length',str(len(body)));self.send_header('Content-Disposition','attachment; filename="SOLAR_JIN_CAD_satellite.zip"');self.end_headers();self.wfile.write(body)
+        except ValueError as error:return self.reply({'error':str(error)},422)
+        except Exception:return self.reply({'error':'위성사진 CAD 작성에 실패했습니다. 잠시 후 다시 시도하세요.'},502)
     def __init__(self,*a,**kw):super().__init__(*a,directory=str(ROOT/'dist'),**kw)
     def log_message(self,*args):pass  # Do not record parcel queries on disk.
     def reply(self,value,status=200):

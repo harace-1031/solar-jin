@@ -7,6 +7,7 @@ from threading import BoundedSemaphore
 from urllib.parse import parse_qs, unquote
 import server
 import search_records
+import cad_export
 
 ROOT=Path(__file__).resolve().parent
 STATIC=ROOT/'dist'
@@ -53,6 +54,21 @@ def application(environ,start_response):
             body=search_records.workbook(search_records.addresses())
             return send(body,mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',extra=[('Content-Disposition','attachment; filename="SOLAR_JIN_parcels.xlsx"')])
         except Exception as error:return send('저장소 연결 실패: '+search_records.storage_error(error),502,'text/plain; charset=utf-8')
+    if path=='/api/cad-package':
+        if method!='POST':return send({'error':'POST only'},405,extra=[('Allow','POST')])
+        origin=environ.get('HTTP_ORIGIN')
+        origins={'https://'+h for h in allowed if h not in {'localhost','127.0.0.1'}}
+        if host in {'localhost','127.0.0.1'}:origins.add('http://'+environ.get('HTTP_HOST',''))
+        if origin and origin not in origins:return send({'error':'허용되지 않은 요청입니다.'},403)
+        try:
+            size=int(environ.get('CONTENT_LENGTH','0'))
+            if not 0<size<=4096:return send({'error':'다운로드 요청이 올바르지 않습니다.'},400)
+            data=json.loads(environ['wsgi.input'].read(size).decode())
+            body=cad_export.prepare(data)
+            return send(body,mime='application/zip',extra=[('Content-Disposition','attachment; filename="SOLAR_JIN_CAD_satellite.zip"')])
+        except ValueError as error:return send({'error':str(error)},422)
+        except ImportError:return send({'error':'CAD 사진 기능 설치가 필요합니다. requirements.txt까지 함께 업로드했는지 확인하세요.'},503)
+        except Exception:return send({'error':'위성사진 CAD 작성에 실패했습니다. 잠시 후 다시 시도하세요. 사진 없이 DXF 다운로드도 가능합니다.'},502)
     if method not in ('GET','HEAD'):return send({'error':'GET only'},405,extra=[('Allow','GET, HEAD')])
     if path in ('/admin','/admin/'):
         return send((STATIC/'admin.html').read_bytes(),mime='text/html; charset=utf-8')

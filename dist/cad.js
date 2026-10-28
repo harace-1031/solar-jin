@@ -52,4 +52,23 @@ function downloadLayoutDxf(){
     link.href=url;link.download='SOLAR_JIN_'+(layout.pnu||'layout')+'_'+count+'modules_1-1000.dxf';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }catch(error){alert(error.message)}
 }
-document.addEventListener('click',event=>{if(event.target.closest?.('[data-cad-download]'))downloadLayoutDxf()});
+let cadPackageBusy=false;
+async function downloadCadWithSatellite(button){
+  if(cadPackageBusy)return;
+  const original=button.textContent;
+  try{
+    const layout=currentCombinedLayout(unique().ps);
+    if(layout?.status!=='ok'||!layout.cadToken)throw Error('배치도에서 다시 그리기를 누르고 완료 후 다운로드하세요.');
+    const tiers=+state.moduleTiers||1;
+    const count=Math.min(layout.count,+state.capLimit>0?Math.floor(+state.capLimit/(layout.moduleWp/1000)/tiers+1e-8)*tiers:layout.count);
+    cadPackageBusy=true;button.disabled=true;button.textContent='사진과 CAD를 묶는 중…';
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),180000);
+    try{
+      const response=await fetch('/api/cad-package',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:layout.cadToken,count}),signal:controller.signal});
+      if(!response.ok){const data=await response.json();throw Error(data.error||'다운로드에 실패했습니다.')}
+      const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='SOLAR_JIN_'+layout.pnu+'_'+count+'modules_CAD_satellite.zip';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }finally{clearTimeout(timer)}
+  }catch(error){alert(error.name==='AbortError'?'위성사진 작성이 지연됩니다. 잠시 후 다시 시도하세요.':error.message)}
+  finally{cadPackageBusy=false;button.disabled=false;button.textContent=original}
+}
+document.addEventListener('click',event=>{const photo=event.target.closest?.('[data-cad-satellite]');if(photo){downloadCadWithSatellite(photo);return}if(event.target.closest?.('[data-cad-download]'))downloadLayoutDxf()});
