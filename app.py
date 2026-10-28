@@ -72,7 +72,7 @@ def application(environ,start_response):
                 if method=='GET':result['collectionStatus']=search_records.record(result.get('address'))
             elif path=='/api/terrain':result=server.terrain_detail(pnu)
             elif path=='/api/housing':result=server.housing_detail(pnu)
-            elif path=='/api/layout':result=server.satellite_layout(get('pnus',pnu),float(get('usable','100')),float(get('density','7')),float(get('rowGap','1.32')),float(get('moduleLength','2382')),float(get('moduleWidth','1134')),float(get('moduleWp','650')),float(get('tilt','10')),int(get('tiers','1')))
+            elif path=='/api/layout':result=server.satellite_layout(get('pnus',pnu),float(get('usable','100')),float(get('density','7')),float(get('rowGap','1.32')),float(get('moduleLength','2382')),float(get('moduleWidth','1134')),float(get('moduleWp','650')),float(get('tilt','10')),int(get('tiers','1')),float(get('setback','2')))
             elif path=='/api/grid':
                 land=server.land_detail(pnu);result=server.grid_detail(land['address'],land['pnu'])
             else:

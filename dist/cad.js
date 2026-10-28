@@ -35,7 +35,7 @@ function buildLayoutDxf(layout,count){
     'CRS EPSG:5179 / X Easting, Y Northing / 1 drawing unit = 1 metre / 2D plan projection',
     `MODULE ${g.moduleLengthMm} x ${g.moduleWidthMm} mm / ${g.moduleWp} Wp / COUNT ${count} / DC ${(count*g.moduleWp/1000).toFixed(3)} kWp`,
     `TILT ${g.tiltDeg} deg from horizontal / TIERS ${g.tiers} / SOLAR ALTITUDE 25 deg / SOUTH FACING`,
-    `ROW CLEAR GAP ${g.rowGapM.toFixed(4)} m / ROW PITCH ${g.rowPitchM.toFixed(4)} m / SITE SETBACK 2 m`,
+    `ROW CLEAR GAP ${g.rowGapM.toFixed(4)} m / ROW PITCH ${g.rowPitchM.toFixed(4)} m / SITE SETBACK ${g.boundarySetbackM??layout.boundarySetbackMm/1000} m`,
     'DEM REPRESENTATIVE TERRAIN / VERIFY BOUNDARIES AND FIELD OBSTACLES / SATELLITE IMAGE NOT EMBEDDED',
     'PNU '+(layout.pnus||[]).join(', ')
   ];
