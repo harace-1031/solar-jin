@@ -77,7 +77,7 @@ def prepare(data):
         notes=[
             'SOLAR_JIN / CONCEPT PLAN / EPSG:5179 / MODEL UNITS: METRES',
             f"MODULE {g['moduleLengthMm']:g} x {g['moduleWidthMm']:g} mm | {g['moduleWp']:g} Wp | COUNT {count} | DC {count*g['moduleWp']/1000:.3f} kWp",
-            f"TILT {g['tiltDeg']:g} deg | TIERS {g['tiers']} | SUN ALTITUDE 25 deg | SOUTH FACING",
+            f"TILT {g['tiltDeg']:g} deg | TIERS {g['tiers']} | SUN ALTITUDE 25 deg | MODE {g.get('layoutMode','rows')} | ASPECT {g.get('aspectDeg',180):.1f} deg | MODULE GAP 10 mm",
             f"BOUNDARY SETBACK {g['boundarySetbackM']:g} m | ROW GAP {g['rowGapM']:.4f} m | PITCH {g['rowPitchM']:.4f} m",
             '2D PROJECTED MODULES / DEM REPRESENTATIVE SLOPE / VERIFY ACTUAL BOUNDARIES AND OBSTACLES',
             'Tiles (c) Esri | Esri, Vantor, Earthstar Geographics and GIS User Community',

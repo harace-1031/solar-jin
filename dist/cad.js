@@ -34,7 +34,7 @@ function buildLayoutDxf(layout,count){
     'PRINT LAYOUT: PRINT_1_1000 / SCALE 1:1000 / PAPER '+CAD_DXF_TEMPLATE.paper+' / PRINT PAPER SPACE AT 1:1',
     'CRS EPSG:5179 / X Easting, Y Northing / 1 drawing unit = 1 metre / 2D plan projection',
     `MODULE ${g.moduleLengthMm} x ${g.moduleWidthMm} mm / ${g.moduleWp} Wp / COUNT ${count} / DC ${(count*g.moduleWp/1000).toFixed(3)} kWp`,
-    `TILT ${g.tiltDeg} deg from horizontal / TIERS ${g.tiers} / SOLAR ALTITUDE 25 deg / SOUTH FACING`,
+    `TILT ${g.tiltDeg} deg from horizontal / TIERS ${g.tiers} / SOLAR ALTITUDE 25 deg / MODE ${g.layoutMode||'rows'} / ASPECT ${g.aspectDeg??180} deg / MODULE GAP 10 mm`,
     `ROW CLEAR GAP ${g.rowGapM.toFixed(4)} m / ROW PITCH ${g.rowPitchM.toFixed(4)} m / SITE SETBACK ${g.boundarySetbackM??layout.boundarySetbackMm/1000} m`,
     'DEM REPRESENTATIVE TERRAIN / VERIFY BOUNDARIES AND FIELD OBSTACLES / SATELLITE IMAGE NOT EMBEDDED',
     'PNU '+(layout.pnus||[]).join(', ')
@@ -46,7 +46,7 @@ function downloadLayoutDxf(){
   try{
     const layout=currentCombinedLayout(unique().ps);
     if(layout?.status!=='ok')throw Error('배치를 완료한 뒤 다운로드하세요.');
-    const tiers=+state.moduleTiers||1;
+    const tiers=layout.spacing.tiers;
     const count=Math.min(layout.count,+state.capLimit>0?Math.floor(+state.capLimit/(layout.moduleWp/1000)/tiers+1e-8)*tiers:layout.count);
     const content=buildLayoutDxf(layout,count),blob=new Blob([content],{type:'application/dxf'}),url=URL.createObjectURL(blob),link=document.createElement('a');
     link.href=url;link.download='SOLAR_JIN_'+(layout.pnu||'layout')+'_'+count+'modules_1-1000.dxf';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -59,7 +59,7 @@ async function downloadCadWithSatellite(button){
   try{
     const layout=currentCombinedLayout(unique().ps);
     if(layout?.status!=='ok'||!layout.cadToken)throw Error('배치도에서 다시 그리기를 누르고 완료 후 다운로드하세요.');
-    const tiers=+state.moduleTiers||1;
+    const tiers=layout.spacing.tiers;
     const count=Math.min(layout.count,+state.capLimit>0?Math.floor(+state.capLimit/(layout.moduleWp/1000)/tiers+1e-8)*tiers:layout.count);
     cadPackageBusy=true;button.disabled=true;button.textContent='사진과 CAD를 묶는 중…';
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),180000);
